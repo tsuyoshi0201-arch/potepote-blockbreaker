@@ -35,15 +35,26 @@
 
     /* ===== メインレイアウト ===== */
     #game-wrap {
-      display: flex; gap: 14px; align-items: flex-start;
-      padding: 0 16px 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 0 8px 24px;
+      width: 100%;
+      max-width: 480px;
     }
 
     /* ===== Canvas ===== */
-    #canvas-wrap { position: relative; flex-shrink: 0; }
+    #canvas-wrap {
+      position: relative;
+      width: 100%;
+      max-width: 400px;
+    }
 
     canvas {
       display: block;
+      width: 100%;
+      height: auto;
       border: 2px solid #A5D6A7;
       box-shadow: 0 4px 24px rgba(0,0,0,0.5);
     }
@@ -111,7 +122,16 @@
 
     /* ===== サイドパネル ===== */
     #side-panel {
-      display: flex; flex-direction: column; gap: 10px; min-width: 120px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      width: 100%;
+      max-width: 400px;
+    }
+
+    /* スタートボタンとヒントは全幅 */
+    #start-btn, #side-panel .hint-box {
+      grid-column: 1 / -1;
     }
 
     .panel-box {
@@ -186,16 +206,18 @@
       <div id="lives-display">🐾🐾🐾🐾🐾</div>
     </div>
 
-    <div class="panel-box">
+    <div class="panel-box" style="grid-column: 1 / -1;">
       <div class="panel-label">むずかしさ</div>
-      <button class="diff-btn selected" onclick="setDifficulty(1)">🍀 甘口</button>
-      <button class="diff-btn"          onclick="setDifficulty(2)">🌿 中辛</button>
-      <button class="diff-btn"          onclick="setDifficulty(3)">🌶️ 辛口</button>
+      <div style="display:flex; gap:6px;">
+        <button class="diff-btn selected" onclick="setDifficulty(1)" style="margin-bottom:0;">🍀 甘口</button>
+        <button class="diff-btn"          onclick="setDifficulty(2)" style="margin-bottom:0;">🌿 中辛</button>
+        <button class="diff-btn"          onclick="setDifficulty(3)" style="margin-bottom:0;">🌶️ 辛口</button>
+      </div>
     </div>
 
     <button id="start-btn" onclick="handleStartBtn()">スタート 🌿</button>
 
-    <div class="panel-box">
+    <div class="panel-box hint-box" style="grid-column: 1 / -1;">
       <div class="hint-text">
         マウス：パドル移動<br>
         クリック：ボール発射<br>
