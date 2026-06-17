@@ -228,6 +228,10 @@
         🔵 WIDE：パドル2倍<br>
         🟠 BALL×3：ボール3つ<br>
         🩷 BIG：ボール5倍<br>
+        🔥 FIRE：貫通ボール（中辛・辛口）<br>
+        💣 BOMB：周辺ブロック爆破<br>
+        🌑 DARK：残り半分で自動暗転<br>
+        💡 LIGHT：DARK中にドロップ・解除<br>
         ─────<br>
         🐾 イタズラ（20秒ごと）<br>
         甘口：1個復活<br>
@@ -380,9 +384,20 @@
   // ==================================================
   const ITEM_W = 42, ITEM_H = 16, ITEM_SPEED = 2;
   const ITEM_TYPES = {
-    wide:  { color: '#90CAF9', label: 'WIDE',   text: 'パドルが広がった！'   },
-    multi: { color: '#FFCC80', label: 'BALL×3', text: 'ボールが3つに！'     },
-    big:   { color: '#F48FB1', label: 'BIG',    text: 'ボールが巨大化！'    },
+    wide:  { color: '#90CAF9', label: 'WIDE',   itazura: false },
+    multi: { color: '#FFCC80', label: 'BALL×3', itazura: false },
+    big:   { color: '#F48FB1', label: 'BIG',    itazura: false },
+    fire:  { color: '#FF7043', label: 'FIRE',   itazura: false },
+    bomb:  { color: '#FFD54F', label: 'BOMB',   itazura: false },
+    dark:  { color: '#455A64', label: 'DARK!',  itazura: true  },
+    light: { color: '#FFF9C4', label: '💡LIGHT', itazura: false },
+  };
+
+  // 難易度別アイテムプール（通常ドロップ）
+  const ITEM_POOL = {
+    1: ['wide','multi','big','bomb'],
+    2: ['wide','multi','big','fire','bomb'],
+    3: ['wide','multi','big','fire','bomb'],
   };
 
   // ==================================================
@@ -405,6 +420,16 @@
   let bigBallActive  = false;
   let bigBallTimer   = null;
   const BIG_DURATION = 10000; // 10秒間
+
+  // FIREボール（貫通）
+  let fireActive  = false;
+  let fireTimer   = null;
+  const FIRE_DURATION = 8000; // 8秒間
+
+  // DARK（暗闇）：ブロック半分以下で自動発動、LIGHTを取るまで永続
+  let darkActive    = false;
+  let darkTriggered = false; // 同ステージ内で再発動しない
+  let initialBlockCount = 0; // ステージ開始時の壊せるブロック数
 
   function ballR() { return bigBallActive ? BALL_R * 5 : BALL_R; }
 
@@ -518,6 +543,9 @@
       }
     }
 
+    // 壊せるブロックの初期数を記録（DARK発動判定用）
+    initialBlockCount = blocks.filter(b => !b.indestructible).length;
+
     // 壊せないブロックをランダムに配置
     const hardCount = INDESTRUCTIBLE_COUNT[stageIdx] || 0;
     if (hardCount > 0) {
@@ -541,6 +569,12 @@
     // BIGボールリセット
     clearTimeout(bigBallTimer);
     bigBallActive = false;
+    // FIREリセット
+    clearTimeout(fireTimer);
+    fireActive = false;
+    // DARKリセット
+    darkActive    = false;
+    darkTriggered = false;
     // イタズラリセット
     itazuraTimer = 0;
     reviveFlash  = [];
@@ -569,12 +603,18 @@
   // ==================================================
   function trySpawnItem(bx, by) {
     if (Math.random() > 0.25) return; // 25%の確率
-    const r = Math.random();
-    const type = r < 0.33 ? 'wide' : r < 0.66 ? 'multi' : 'big';
+    let type;
+    if (darkActive) {
+      // DARK中はLIGHTを優先ドロップ（50%）
+      type = Math.random() < 0.5 ? 'light' : ITEM_POOL[difficulty][Math.floor(Math.random() * ITEM_POOL[difficulty].length)];
+    } else {
+      const pool = ITEM_POOL[difficulty];
+      type = pool[Math.floor(Math.random() * pool.length)];
+    }
     items.push({ x: bx + BW/2 - ITEM_W/2, y: by, type });
   }
 
-  function activateItem(type) {
+  function activateItem(type, itemCenterX) {
     if (type === 'wide') {
       // パドルを2倍に（12秒間）
       paddle.w = Math.min(CW * 0.8, paddleBaseW * 2);
@@ -606,10 +646,45 @@
       // ボールを5倍の大きさに（10秒間）
       bigBallActive = true;
       clearTimeout(bigBallTimer);
-      bigBallTimer = setTimeout(() => {
-        bigBallActive = false;
-      }, BIG_DURATION);
+      bigBallTimer = setTimeout(() => { bigBallActive = false; }, BIG_DURATION);
       playSound('big');
+
+    } else if (type === 'fire') {
+      // 貫通ボール（8秒間）
+      fireActive = true;
+      clearTimeout(fireTimer);
+      fireTimer = setTimeout(() => { fireActive = false; }, FIRE_DURATION);
+      showItazuraSpeech('🔥 FIREボール！貫通するよ！');
+      playSound('item');
+
+    } else if (type === 'bomb') {
+      // アイテムのX座標を中心に左右3列分のブロックを一括破壊
+      const cx = itemCenterX !== undefined ? itemCenterX : CW / 2;
+      const BOMB_RANGE_X = BW * 3 + BGAPX * 2; // 横3列分
+      blocks.forEach(blk => {
+        if (blk.hp <= 0 || blk.indestructible) return;
+        const distX = Math.abs(blk.x + BW / 2 - cx);
+        if (distX <= BOMB_RANGE_X) {
+          score += BLOCK_DEF[blk.type].pts * (3 - Math.max(1, difficulty - 1));
+          blk.hp = 0;
+          reviveFlash.push({ blk, timer: 30 }); // 爆破フラッシュ演出
+        }
+      });
+      updateScore();
+      showItazuraSpeech('💣 ボム！周りのブロックをドカン！');
+      playSound('bomb');
+
+    } else if (type === 'dark') {
+      // 暗闇（LIGHTを取るまで永続）
+      darkActive = true;
+      showItazuraSpeech('あはは！まっくらにしちゃえ〜！🌑');
+      playSound('itazura');
+
+    } else if (type === 'light') {
+      // DARK解除（darkTriggeredはtrueのまま→同ステージ内で再発動しない）
+      darkActive = false;
+      showItazuraSpeech('💡 ひかりをみつけた！DARKが解けたよ〜！');
+      playSound('item');
     }
   }
 
@@ -668,8 +743,19 @@
       if (it.y + ITEM_H >= paddle.y &&
           it.x + ITEM_W >= paddle.x &&
           it.x <= paddle.x + paddle.w) {
-        activateItem(it.type);
+        activateItem(it.type, it.x + ITEM_W / 2);
         items.splice(i, 1);
+      }
+    }
+
+    // DARK自動発動：壊せるブロックが半分以下になったら発動
+    if (!darkActive && !darkTriggered && initialBlockCount > 0) {
+      const remaining = blocks.filter(b => b.hp > 0 && !b.indestructible).length;
+      if (remaining <= Math.floor(initialBlockCount / 2)) {
+        darkActive    = true;
+        darkTriggered = true;
+        showItazuraSpeech('ブロックが半分になったよ〜！まっくらにしちゃえ〜！🌑');
+        playSound('itazura');
       }
     }
 
@@ -716,27 +802,41 @@
       const dx = b.x - cx, dy = b.y - cy;
       if (dx*dx + dy*dy > br * br) continue;
 
-      const overX = br - Math.abs(dx);
-      const overY = br - Math.abs(dy);
-      if (overX < overY) {
-        b.vx = dx < 0 ? -Math.abs(b.vx) : Math.abs(b.vx);
-        b.x += dx < 0 ? -overX : overX;
-      } else {
-        b.vy = dy < 0 ? -Math.abs(b.vy) : Math.abs(b.vy);
-        b.y += dy < 0 ? -overY : overY;
-      }
-
       if (blk.indestructible) {
-        // 壊せないブロック：HPは減らない・アイテムも出ない・得点なし
+        // 壊せないブロック：HPは減らない・アイテムも出ない・得点なし（FIREでも反射）
+        const overX = br - Math.abs(dx);
+        const overY = br - Math.abs(dy);
+        if (overX < overY) {
+          b.vx = dx < 0 ? -Math.abs(b.vx) : Math.abs(b.vx);
+          b.x += dx < 0 ? -overX : overX;
+        } else {
+          b.vy = dy < 0 ? -Math.abs(b.vy) : Math.abs(b.vy);
+          b.y += dy < 0 ? -overY : overY;
+        }
         playSound('block');
         break;
       }
+
+      // 通常ブロック
+      if (!fireActive) {
+        // 通常：反射する
+        const overX = br - Math.abs(dx);
+        const overY = br - Math.abs(dy);
+        if (overX < overY) {
+          b.vx = dx < 0 ? -Math.abs(b.vx) : Math.abs(b.vx);
+          b.x += dx < 0 ? -overX : overX;
+        } else {
+          b.vy = dy < 0 ? -Math.abs(b.vy) : Math.abs(b.vy);
+          b.y += dy < 0 ? -overY : overY;
+        }
+      }
+      // FIREアクティブ時は反射せず貫通（位置補正なし、次のブロックへ進む）
       blk.hp--;
-      if (blk.hp <= 0) trySpawnItem(blk.x, blk.y); // 破壊時にアイテム出現
+      if (blk.hp <= 0) trySpawnItem(blk.x, blk.y);
       score += BLOCK_DEF[blk.type].pts * (3 - Math.max(1, difficulty - 1));
       updateScore();
       playSound('block');
-      break;
+      if (!fireActive) break; // 通常は1ブロックで止まる、FIREは貫通
     }
   }
 
@@ -817,8 +917,19 @@
     ctx.textAlign = 'right';
     ctx.fillText(`ブロック残り ${remaining}`, CW - 10, 22);
 
-    // ブロック描画
-    for (const b of blocks) {
+    // DARK時は黒幕を重ねる（ブロック描画をスキップ）
+    if (darkActive) {
+      ctx.fillStyle = '#0e1e08';
+      ctx.fillRect(0, 0, CW, CH);
+      // DARK中もステージ情報は表示
+      ctx.fillStyle = 'rgba(165,214,167,0.4)';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(`STAGE ${stageIdx + 1}  ${STAGES[stageIdx].name}`, 10, 22);
+    }
+
+    // ブロック描画（DARKアクティブ時はスキップ）
+    if (!darkActive) for (const b of blocks) {
       if (b.hp <= 0) continue;
 
       if (b.indestructible) {
@@ -955,12 +1066,23 @@
       }
     }
 
-    // BIGタイマー残り表示
+    // アクティブ効果ステータス表示
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'left';
+    let statusX = 10;
     if (bigBallActive) {
-      ctx.fillStyle = 'rgba(244,143,177,0.85)';
-      ctx.font = 'bold 11px sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText('🔴 BIG', 10, CH - 14);
+      ctx.fillStyle = 'rgba(244,143,177,0.9)';
+      ctx.fillText('🔴BIG', statusX, CH - 14);
+      statusX += 52;
+    }
+    if (fireActive) {
+      ctx.fillStyle = 'rgba(255,112,67,0.95)';
+      ctx.fillText('🔥FIRE', statusX, CH - 14);
+      statusX += 60;
+    }
+    if (darkActive) {
+      ctx.fillStyle = 'rgba(100,180,255,0.95)';
+      ctx.fillText('🌑DARK', statusX, CH - 14);
     }
 
     // 発射待ちメッセージ
@@ -1029,8 +1151,8 @@
   canvas.addEventListener('mousemove', e => {
     if (gameState !== 'playing') return;
     const rect = canvas.getBoundingClientRect();
-    const mx   = (e.clientX - rect.left) * (CW / rect.width);
-    paddle.x   = Math.max(0, Math.min(CW - paddle.w, mx - paddle.w / 2));
+    const mx = (e.clientX - rect.left) * (CW / rect.width);
+    paddle.x = Math.max(0, Math.min(CW - paddle.w, mx - paddle.w / 2));
   });
 
   canvas.addEventListener('click', () => {
@@ -1044,8 +1166,8 @@
     e.preventDefault();
     if (gameState !== 'playing') return;
     const rect = canvas.getBoundingClientRect();
-    const tx   = (e.touches[0].clientX - rect.left) * (CW / rect.width);
-    paddle.x   = Math.max(0, Math.min(CW - paddle.w, tx - paddle.w / 2));
+    const tx = (e.touches[0].clientX - rect.left) * (CW / rect.width);
+    paddle.x = Math.max(0, Math.min(CW - paddle.w, tx - paddle.w / 2));
   }, { passive: false });
 
   canvas.addEventListener('touchstart', e => {
@@ -1111,6 +1233,23 @@
         gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
         osc.start(); osc.stop(audioCtx.currentTime + 0.3);
+      } else if (type === 'bomb') {
+        // 爆発音：ドカン！
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(30, audioCtx.currentTime + 0.3);
+        gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.35);
+        // ノイズ成分（クラッシュ感）
+        const osc2 = audioCtx.createOscillator();
+        const gain2 = audioCtx.createGain();
+        osc2.connect(gain2); gain2.connect(audioCtx.destination);
+        osc2.type = 'square';
+        osc2.frequency.setValueAtTime(80, audioCtx.currentTime);
+        gain2.gain.setValueAtTime(0.15, audioCtx.currentTime);
+        gain2.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+        osc2.start(); osc2.stop(audioCtx.currentTime + 0.2);
       } else if (type === 'itazura') {
         // イタズラ音：ぽわんとした不思議な音
         osc.type = 'sine';
